@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+
+import subprocess
+import argparse
+from sys import argv, stderr, exit
+from pathlib import Path
+from os import chdir
+from functools import cache
+
+SVCS = [
+    "all",
+# register your services here
+]
+
+def errexit(code: int, msg: str):
+    print(f"ERROR: {msg}", file=stderr)
+    exit(code)
+
+
+@cache
+def action_exe(action: str):
+    return f"./{action}"
+
+
+def run_action(action, svc, force=False):
+    try:
+        output = subprocess.run([action_exe(action)], cwd=svc)
+    except FileNotFoundError:
+        pass
+    except PermissionError:
+        pass
+    else:
+        if not force:
+            output.check_returncode()
+        return
+
+    if action == "restart":
+        run_action("stop", svc, force=True)
+        run_action("start", svc, force=force)
+        return
+
+
+def run_actions(action, svcs, force=False):
+    for s in svcs:
+        run_action(action, s, force=force)
+
+
+def validate_svcs(args):
+    if (svcs := getattr(args, 'svcs', None)) is None:
+        return
+
+    if not isinstance(svcs, list):
+        svcs = [svcs]
+
+    s = set(svcs)
+    if len(s) != len(svcs):
+        errexit(2, "duplicates in service list are not allowed")
+
+    if len(s) != 1 and "all" in s:
+        errexit(2, "'all' can only be specified if it's the only argument present")
+
+    if "all" in s:
+        args.svcs = SVCS[1:]
+    else:
+        args.svcs = svcs
+
+
+if __name__ == "__main__":
+    chdir(Path(__file__).resolve().parent)
+
+    parser = argparse.ArgumentParser(description="Simple service manager")
+
+    subparsers = parser.add_subparsers(required=True)
+
+    common_parser = argparse.ArgumentParser(add_help=False)
+    common_parser.add_argument(
+        'svcs',
+        nargs='*',
+        default='all',
+        choices=SVCS,
+        help="services to manage, if not specified defaults to all",
+    )
+    common_parser.add_argument(
+        '-f', '--force',
+        action='store_true',
+        help="ignore any errors when executing serivce actions",
+    )
+
+    for action in ["start", "stop", "restart"]:
+        action_parser = subparsers.add_parser(
+            action,
+            help=f'{action} services',
+            parents=[common_parser],
+        )
+        action_parser.set_defaults(action=action)
+
+    args = parser.parse_args(argv[1:])
+
+    validate_svcs(args)
+
+    run_actions(args.action, args.svcs, force=args.force)
